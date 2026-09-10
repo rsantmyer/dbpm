@@ -3340,6 +3340,98 @@ def test_resume_recovers_multi_package_plan_when_root_never_started(tmp_path: Pa
         cli._enforce_installed_state(item)
 
 
+def _resume_lifecycle_package_plan_with_upgrade(app_name: str, *, reason: str) -> dict[str, object]:
+    return {
+        "package": {"name": app_name.lower(), "application_name": app_name, "version": "1.0.0"},
+        "installation_reason": reason,
+        "lifecycle": {
+            "install": {"path": f"{app_name}/install.sql", "ref": f"/store/{app_name}/install.sql"},
+            "upgrade": {"path": f"{app_name}/upgrade.sql", "ref": f"/store/{app_name}/upgrade.sql"},
+        },
+    }
+
+
+def test_resume_reruns_upgrade_script_for_stuck_upgrade_operation(tmp_path: Path, monkeypatch):
+    # The operation in flight was an `upgrade`, not an `install`. Resuming it
+    # should re-run the upgrade script for a package already underway, since
+    # an install script can legitimately refuse to run against a schema its
+    # own upgrade already touched.
+    receipt = _lifecycle_plan(
+        [_resume_lifecycle_package_plan_with_upgrade("ROOT", reason="APPLICATION_ROOT")],
+        root_app="ROOT",
+    )
+    monkeypatch.setattr(cli, "load_lifecycle_receipt", lambda **kwargs: receipt)
+    monkeypatch.setattr(
+        cli,
+        "get_current_operation",
+        lambda **kwargs: OperationRecord(
+            operation_id="op-1",
+            application_name="ROOT",
+            mode="upgrade",
+            state="RUNNING",
+            attempt_number=1,
+            lease_token=None,
+            lease_expiry=None,
+        ),
+    )
+    states = {
+        "ROOT": {"application_name": "ROOT", "version": "1.0.0", "deploy_status": "R"},
+    }
+    monkeypatch.setattr(cli, "_get_installed_state", lambda args, app: states.get(app))
+
+    args = cli._build_parser().parse_args(
+        [
+            "resume", "--application", "ROOT", "--runtime-prefix", str(tmp_path),
+            "--connect", "user/pass@db",
+        ]
+    )
+    plan = cli._build_installed_resume_plan(args)
+
+    by_app = {item["package"]["application_name"]: item for item in plan["packages"]}
+    assert by_app["ROOT"]["mode"] == "resume"
+    assert by_app["ROOT"]["execution"]["script"] == "ROOT/upgrade.sql"
+    assert by_app["ROOT"]["execution"]["script_ref"] == "/store/ROOT/upgrade.sql"
+
+
+def test_resume_falls_back_to_install_script_for_package_not_yet_started(
+    tmp_path: Path, monkeypatch
+):
+    # Even when the in-flight operation's mode is "upgrade", a package that
+    # hasn't been reached yet (no APPLICATION row) has nothing to resume and
+    # should still be treated as a fresh install.
+    receipt = _lifecycle_plan(
+        [_resume_lifecycle_package_plan_with_upgrade("ROOT", reason="APPLICATION_ROOT")],
+        root_app="ROOT",
+    )
+    monkeypatch.setattr(cli, "load_lifecycle_receipt", lambda **kwargs: receipt)
+    monkeypatch.setattr(
+        cli,
+        "get_current_operation",
+        lambda **kwargs: OperationRecord(
+            operation_id="op-1",
+            application_name="ROOT",
+            mode="upgrade",
+            state="RUNNING",
+            attempt_number=1,
+            lease_token=None,
+            lease_expiry=None,
+        ),
+    )
+    monkeypatch.setattr(cli, "_get_installed_state", lambda args, app: None)
+
+    args = cli._build_parser().parse_args(
+        [
+            "resume", "--application", "ROOT", "--runtime-prefix", str(tmp_path),
+            "--connect", "user/pass@db",
+        ]
+    )
+    plan = cli._build_installed_resume_plan(args)
+
+    by_app = {item["package"]["application_name"]: item for item in plan["packages"]}
+    assert by_app["ROOT"]["mode"] == "install"
+    assert by_app["ROOT"]["execution"]["script"] == "ROOT/install.sql"
+
+
 def test_uninstall_runtime_bearing_application_still_requires_runtime_prefix(
     tmp_path: Path, monkeypatch
 ):

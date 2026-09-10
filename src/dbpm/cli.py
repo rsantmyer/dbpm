@@ -1348,7 +1348,6 @@ def _build_installed_resume_plan(
             continue
         updated = dict(item)
         lifecycle = updated.get("lifecycle")
-        install = lifecycle.get("install") if isinstance(lifecycle, dict) else None
         app = updated.get("package")
         app_name = app.get("application_name") if isinstance(app, dict) else None
         fresh_state = _get_installed_state(args, str(app_name))
@@ -1356,11 +1355,22 @@ def _build_installed_resume_plan(
         # row) has nothing to resume; treat it like a fresh install instead of
         # rejecting the whole resume, since get_current_operation() above
         # already confirmed a recoverable operation exists for the plan.
+        #
+        # For a package that IS already underway, resume the same script the
+        # in-flight operation started with (e.g. `upgrade`), not always
+        # `install` -- an install script can legitimately refuse to run
+        # against a schema its own upgrade already touched.
+        resumed_script_key = operation.mode if fresh_state is not None else "install"
+        script = (
+            lifecycle.get(resumed_script_key, lifecycle.get("install"))
+            if isinstance(lifecycle, dict)
+            else None
+        )
         updated["mode"] = "resume" if fresh_state is not None else "install"
         updated["policy"] = environment.evaluate("resume", dirty=False, approve=args.approve)
         updated["execution"] = {
-            "script": install.get("path") if isinstance(install, dict) else None,
-            "script_ref": install.get("ref") if isinstance(install, dict) else None,
+            "script": script.get("path") if isinstance(script, dict) else None,
+            "script_ref": script.get("ref") if isinstance(script, dict) else None,
             "arguments": list(updated.get("execution", {}).get("arguments", [])),
             "stdin": None,
         }
