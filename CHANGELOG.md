@@ -7,6 +7,16 @@ and dbpm follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.5.3] - 2026-09-10
+
+### Fixed
+
+- `dbpm resume` now re-runs the script matching the in-flight operation's
+  mode (e.g. `upgrade`) instead of always re-running `install`; an install
+  script can legitimately refuse to run against a schema its own upgrade
+  already touched. A package the operation hasn't reached yet still falls
+  back to `install`.
+
 ## [1.5.2] - 2026-09-02
 
 ### Fixed
