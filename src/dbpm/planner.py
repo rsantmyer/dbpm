@@ -25,6 +25,7 @@ def create_plan(
     confirm_delete_system: bool = False,
     approve: bool = False,
     required_capabilities: tuple[str, ...] = (),
+    resume_as: str | None = None,
 ) -> dict[str, object]:
     manifest = source.manifest
     policy = environment.evaluate(
@@ -40,7 +41,7 @@ def create_plan(
         manifest=manifest,
         confirm_delete_system=confirm_delete_system,
     )
-    script = _script_for_mode(mode, manifest)
+    script = _script_for_mode(mode, manifest, resume_as=resume_as)
     runtime_package = _application_runtime_package(manifest, source, provenance)
     if (
         mode in {"bootstrap-core", "install", "reinstall", "resume", "upgrade", "validate"}
@@ -145,7 +146,11 @@ def _apply_core_reinstall_policy(
     return updated
 
 
-def _script_for_mode(mode: str, manifest: PackageManifest) -> str | None:
+def _script_for_mode(
+    mode: str, manifest: PackageManifest, *, resume_as: str | None = None
+) -> str | None:
+    if mode == "resume" and resume_as == "upgrade":
+        return manifest.scripts.upgrade
     if mode in {"install", "reinstall", "resume", "bootstrap-core"}:
         return manifest.scripts.install
     if mode == "upgrade":

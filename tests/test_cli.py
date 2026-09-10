@@ -1432,6 +1432,67 @@ def test_resume_allows_running_deployment(tmp_path: Path, monkeypatch):
     assert cli.main(["resume", str(package), "--connect", "user/pass@db"]) == 0
 
 
+def test_resume_as_upgrade_selects_upgrade_script_for_database_only_package(
+    tmp_path: Path, monkeypatch
+):
+    # A database-only package (no application_runtime) has no operation
+    # state for resume to infer from; --as lets the user say what was
+    # actually in flight.
+    package = tmp_path / "package"
+    _write_package_with_upgrade(package)
+
+    monkeypatch.setattr(
+        cli,
+        "get_application_state",
+        lambda **kwargs: ApplicationState(
+            application_name="DEMO",
+            version="1.0.1",
+            deploy_status="R",
+            deploy_commit_hash="abc",
+        ),
+    )
+    calls = {}
+
+    def fake_execute_plan(plan, *args, **kwargs):
+        calls["plan"] = plan
+        return 0
+
+    monkeypatch.setattr(cli, "execute_plan", fake_execute_plan)
+
+    assert cli.main(
+        ["resume", str(package), "--as", "upgrade", "--connect", "user/pass@db"]
+    ) == 0
+
+    assert calls["plan"]["execution"]["script"] == "Deployment_Manifests/upgrade.sql"
+
+
+def test_resume_without_as_still_defaults_to_install_script(tmp_path: Path, monkeypatch):
+    package = tmp_path / "package"
+    _write_package_with_upgrade(package)
+
+    monkeypatch.setattr(
+        cli,
+        "get_application_state",
+        lambda **kwargs: ApplicationState(
+            application_name="DEMO",
+            version="1.0.1",
+            deploy_status="R",
+            deploy_commit_hash="abc",
+        ),
+    )
+    calls = {}
+
+    def fake_execute_plan(plan, *args, **kwargs):
+        calls["plan"] = plan
+        return 0
+
+    monkeypatch.setattr(cli, "execute_plan", fake_execute_plan)
+
+    assert cli.main(["resume", str(package), "--connect", "user/pass@db"]) == 0
+
+    assert calls["plan"]["execution"]["script"] == "Deployment_Manifests/deploy.sql"
+
+
 def test_resume_blocks_complete_deployment(tmp_path: Path, monkeypatch, capsys):
     package = tmp_path / "package"
     _write_package(package)
@@ -3581,6 +3642,47 @@ def test_resume_falls_back_to_install_script_for_package_not_yet_started(
     by_app = {item["package"]["application_name"]: item for item in plan["packages"]}
     assert by_app["ROOT"]["mode"] == "install"
     assert by_app["ROOT"]["execution"]["script"] == "ROOT/install.sql"
+
+
+def test_resume_as_overrides_target_package_script_in_composite_plan(
+    tmp_path: Path, monkeypatch
+):
+    # --as lets the user override script selection for the package they
+    # targeted, even when automatic detection (operation.mode) would have
+    # picked something else.
+    receipt = _lifecycle_plan(
+        [_resume_lifecycle_package_plan_with_upgrade("ROOT", reason="APPLICATION_ROOT")],
+        root_app="ROOT",
+    )
+    monkeypatch.setattr(cli, "load_lifecycle_receipt", lambda **kwargs: receipt)
+    monkeypatch.setattr(
+        cli,
+        "get_current_operation",
+        lambda **kwargs: OperationRecord(
+            operation_id="op-1",
+            application_name="ROOT",
+            mode="install",
+            state="RUNNING",
+            attempt_number=1,
+            lease_token=None,
+            lease_expiry=None,
+        ),
+    )
+    states = {
+        "ROOT": {"application_name": "ROOT", "version": "1.0.0", "deploy_status": "R"},
+    }
+    monkeypatch.setattr(cli, "_get_installed_state", lambda args, app: states.get(app))
+
+    args = cli._build_parser().parse_args(
+        [
+            "resume", "--application", "ROOT", "--as", "upgrade",
+            "--runtime-prefix", str(tmp_path), "--connect", "user/pass@db",
+        ]
+    )
+    plan = cli._build_installed_resume_plan(args)
+
+    by_app = {item["package"]["application_name"]: item for item in plan["packages"]}
+    assert by_app["ROOT"]["execution"]["script"] == "ROOT/upgrade.sql"
 
 
 def test_uninstall_runtime_bearing_application_still_requires_runtime_prefix(
