@@ -3352,6 +3352,55 @@ def test_install_with_skip_runtime_blocked_when_core_deploy_locked(tmp_path: Pat
     assert "--skip-runtime requires DEPLOY_LOCKED=N" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("value", ["1", "true", "True", "yes", "on"])
+def test_skip_runtime_flag_defaults_on_when_env_var_truthy(monkeypatch, value):
+    monkeypatch.setenv("DBPM_SKIP_RUNTIME", value)
+
+    args = cli._build_parser().parse_args(["install"])
+
+    assert args.skip_runtime is True
+
+
+@pytest.mark.parametrize("value", ["0", "false", "", "no"])
+def test_skip_runtime_flag_defaults_off_when_env_var_not_truthy(monkeypatch, value):
+    monkeypatch.setenv("DBPM_SKIP_RUNTIME", value)
+
+    args = cli._build_parser().parse_args(["install"])
+
+    assert args.skip_runtime is False
+
+
+def test_skip_runtime_flag_defaults_off_when_env_var_unset(monkeypatch):
+    monkeypatch.delenv("DBPM_SKIP_RUNTIME", raising=False)
+
+    args = cli._build_parser().parse_args(["install"])
+
+    assert args.skip_runtime is False
+
+
+def test_install_with_skip_runtime_env_var_nulls_plan_runtime(
+    tmp_path: Path, monkeypatch, capsys
+):
+    monkeypatch.setenv("DBPM_SKIP_RUNTIME", "1")
+    package = tmp_path / "package"
+    _write_package(package)
+
+    real_build_plan = cli._build_plan
+
+    def fake_build_plan(command, args, **kwargs):
+        plan = real_build_plan(command, args, **kwargs)
+        plan["application_runtime"] = {"receipt_backed": True}
+        plan["policy"] = {"policy_context": {"deployment_locked": False}}
+        return plan
+
+    monkeypatch.setattr(cli, "_build_plan", fake_build_plan)
+
+    assert cli.main(["install", str(package), "--dry-run"]) == 0
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["application_runtime"] is None
+
+
 def test_uninstall_runtime_less_application_does_not_require_runtime_prefix(
     tmp_path: Path, monkeypatch
 ):

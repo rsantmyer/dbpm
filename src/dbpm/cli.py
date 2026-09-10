@@ -802,13 +802,19 @@ def _add_execution_args(parser: argparse.ArgumentParser) -> None:
     _add_database_args(parser)
 
 
+def _env_flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _add_skip_runtime_arg(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--skip-runtime",
         action="store_true",
+        default=_env_flag("DBPM_SKIP_RUNTIME"),
         help=(
             "Opt out of application runtime staging/activation for this invocation; "
-            "only the database component is deployed. Requires DEPLOY_LOCKED=N."
+            "only the database component is deployed. Requires DEPLOY_LOCKED=N. "
+            "Defaults to on when DBPM_SKIP_RUNTIME is set to a truthy value."
         ),
     )
 
